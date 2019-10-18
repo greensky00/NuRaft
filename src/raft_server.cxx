@@ -40,7 +40,8 @@ namespace nuraft {
 const int raft_server::default_snapshot_sync_block_size = 4 * 1024;
 
 raft_server::raft_server(context* ctx, const init_options& opt)
-    : initialized_(false)
+    : rep_pause_(false)
+    , initialized_(false)
     , leader_(-1)
     , id_(ctx->state_mgr_->server_id())
     , target_priority_(srv_config::INIT_PRIORITY)
@@ -1158,6 +1159,13 @@ ulong raft_server::store_log_entry(ptr<log_entry>& entry, ulong index) {
     }
 
     return log_index;
+}
+
+void raft_server::pause_replication(size_t sec) {
+    rep_pause_timer_.set_duration_sec(sec);
+    rep_pause_timer_.reset();
+    rep_pause_ = true;
+    p_in("pause replication for %zu seconds", sec);
 }
 
 } // namespace nuraft;

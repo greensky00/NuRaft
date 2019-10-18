@@ -440,6 +440,8 @@ public:
                                        ptr<state_mgr>& s_mgr,
                                        std::string& err_msg);
 
+    void pause_replication(size_t sec);
+
 protected:
     typedef std::unordered_map<int32, ptr<peer>>::const_iterator peer_itor;
 
@@ -575,6 +577,9 @@ protected:
 
 protected:
     static const int default_snapshot_sync_block_size;
+
+    std::atomic<bool> rep_pause_;
+    timer_helper rep_pause_timer_;
 
     // (Read-only)
     // Background thread for commit and snapshot.

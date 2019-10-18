@@ -84,6 +84,16 @@ bool raft_server::request_append_entries(ptr<peer> p) {
     if (p->make_busy()) {
         p_tr("send request to %d\n", (int)p->get_id());
         ptr<req_msg> msg = create_append_entries_req(*p);
+
+        if (rep_pause_) {
+            if (rep_pause_timer_.timeout()) {
+                rep_pause_ = false;
+                p_in("resume replication");
+            } else {
+                msg.reset();
+            }
+        }
+
         if (!msg) {
             p->set_free();
             return true;
