@@ -219,6 +219,9 @@ raft_server::raft_server(context* ctx, const init_options& opt)
 
     bg_commit_thread_ = std::thread(std::bind(&raft_server::commit_in_bg, this));
 
+    bg_append_ea_ = new EventAwaiter();
+    bg_append_thread_ = std::thread(std::bind(&raft_server::append_entries_in_bg, this));
+
     if (opt.skip_initial_election_timeout_) {
         // Issue #23:
         //   During remediation, the node (to be added) shouldn't be
@@ -249,6 +252,7 @@ raft_server::~raft_server() {
     commit_lock.release();
     ready_to_stop_cv_.wait_for(lock, std::chrono::milliseconds(10));
     cancel_schedulers();
+    delete bg_append_ea_;
 }
 
 void raft_server::update_rand_timeout() {
@@ -355,6 +359,11 @@ void raft_server::shutdown() {
     // Wait for BG commit thread.
     if (bg_commit_thread_.joinable()) {
         bg_commit_thread_.join();
+    }
+
+    if (bg_append_thread_.joinable()) {
+        bg_append_ea_->invoke();
+        bg_append_thread_.join();
     }
 }
 
@@ -500,6 +509,7 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
         resp = handle_priority_change_req(req);
 
     } else if (req.get_type() == msg_type::client_request) {
+        guard.unlock();
         resp = handle_cli_req(req);
 
     } else {
@@ -911,8 +921,11 @@ void raft_server::become_follower() {
 
 bool raft_server::update_term(ulong term) {
     if (term > state_->get_term()) {
-        state_->set_term(term);
-        state_->set_voted_for(-1);
+        {
+            std::lock_guard<std::mutex> ll(cli_lock_);
+            state_->set_term(term);
+            state_->set_voted_for(-1);
+        }
         election_completed_ = false;
         votes_granted_ = 0;
         votes_responded_ = 0;

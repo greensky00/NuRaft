@@ -188,36 +188,65 @@ void raft_server::commit_app_log(ptr<log_entry>& le) {
     ptr<buffer> ret_value = nullptr;
     ptr<buffer> buf = le->get_buf_ptr();
     buf->pos(0);
+    ulong sm_idx = sm_commit_index_.load();
     ret_value = state_machine_->commit_ext
-                ( state_machine::ext_op_params( sm_commit_index_, buf ) );
+                ( state_machine::ext_op_params( sm_idx, buf ) );
     if (ret_value) ret_value->pos(0);
 
     std::list< ptr<commit_ret_elem> > async_elems;
     {   std::unique_lock<std::mutex> cre_lock(commit_ret_elems_lock_);
+        bool match_found = false;
         auto entry = commit_ret_elems_.begin();
         while (entry != commit_ret_elems_.end()) {
             ptr<commit_ret_elem> elem = entry->second;
-            if (elem->idx_ > sm_commit_index_) {
+            if (elem->idx_ > sm_idx) {
                 break;
-            } else if (elem->idx_ == sm_commit_index_) {
+            } else if (elem->idx_ == sm_idx) {
                 elem->result_code_ = cmd_result_code::OK;
                 elem->ret_value_ = ret_value;
-            }
-            p_dv("notify cb %ld %p",
-                 sm_commit_index_.load(), &elem->awaiter_);
+                match_found = true;
+                //p_er("ok! %zu %zu", elem->idx_, sm_idx);
+                p_dv("notify cb %ld %p",
+                     sm_idx, &elem->awaiter_);
 
+                switch (ctx_->get_params()->return_method_) {
+                case raft_params::blocking:
+                default:
+                    // Blocking mode: invoke waiting function.
+                    elem->awaiter_.invoke();
+                    entry++;
+                    break;
+
+                case raft_params::async_handler:
+                    // Async handler: put into list.
+                    async_elems.push_back(elem);
+                    entry = commit_ret_elems_.erase(entry);
+                    break;
+                }
+
+            } else {
+                //p_er("fuck! %zu %zu %p", elem->idx_, sm_idx, elem->ret_value_.get());
+                entry++;
+            }
+        }
+
+        if (is_leader() && !match_found) {
+            // If not found, commit thread is invoked earlier than user thread.
+            // Create one here.
+            ptr<commit_ret_elem> elem = cs_new<commit_ret_elem>();
+            elem->idx_ = sm_idx;
+            elem->result_code_ = cmd_result_code::OK;
+            elem->ret_value_ = ret_value;
             switch (ctx_->get_params()->return_method_) {
             case raft_params::blocking:
             default:
-                // Blocking mode: invoke waiting function.
-                elem->awaiter_.invoke();
-                entry++;
+                elem->awaiter_.invoke(); // Callback will not sleep.
+                commit_ret_elems_.insert( std::make_pair(sm_idx, elem) );
                 break;
-
             case raft_params::async_handler:
                 // Async handler: put into list.
+                elem->async_result_ = cs_new< cmd_result< ptr<buffer> > >();
                 async_elems.push_back(elem);
-                entry = commit_ret_elems_.erase(entry);
                 break;
             }
         }

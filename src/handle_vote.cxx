@@ -119,8 +119,10 @@ void raft_server::initiate_vote(bool ignore_priority) {
         // Request vote when
         //  1) my priority satisfies the target, OR
         //  2) I'm the only node in the group.
-        state_->inc_term();
-        state_->set_voted_for(-1);
+        {   std::lock_guard<std::mutex> ll(cli_lock_);
+            state_->inc_term();
+            state_->set_voted_for(-1);
+        }
         role_ = srv_role::candidate;
         votes_granted_ = 0;
         votes_responded_ = 0;

@@ -36,6 +36,8 @@ limitations under the License.
 #include <string>
 #include <unordered_map>
 
+class EventAwaiter;
+
 namespace nuraft {
 
 using CbReturnCode = cb_func::ReturnCode;
@@ -562,6 +564,8 @@ protected:
     ulong term_for_log(ulong log_idx);
 
     void commit_in_bg();
+    void append_entries_in_bg();
+
     void commit_app_log(ptr<log_entry>& le);
     void commit_conf(ptr<log_entry>& le);
 
@@ -587,6 +591,12 @@ protected:
     // (Read-only)
     // Background thread for commit and snapshot.
     std::thread bg_commit_thread_;
+
+    // (Read-only)
+    // Background thread for sending quick append entry request.
+    std::thread bg_append_thread_;
+
+    EventAwaiter* bg_append_ea_;
 
     // `true` if this server is ready to serve operation.
     std::atomic<bool> initialized_;
@@ -775,6 +785,9 @@ protected:
 
     // Lock of entire Raft operation.
     std::recursive_mutex lock_;
+
+    // Lock of handling client request and term.
+    std::mutex cli_lock_;
 
     // Condition variable to invoke BG commit thread.
     std::condition_variable commit_cv_;
