@@ -41,7 +41,7 @@ void raft_server::append_entries_in_bg() {
     std::string thread_name = "nuraft_append";
     pthread_setname_np(pthread_self(), thread_name.c_str());
 #endif
-    p_in("bg append thread initiated");
+    p_in("bg append thread initiated (using the same lock_)");
     do {
         bg_append_ea_->wait();
         bg_append_ea_->reset();
@@ -50,7 +50,7 @@ void raft_server::append_entries_in_bg() {
         recur_lock(lock_);
         request_append_entries();
     } while (!stopping_);
-    p_in("bg append thread terminated");
+    p_in("bg append thread terminated (using the same lock_)");
 }
 
 void raft_server::request_append_entries() {

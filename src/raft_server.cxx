@@ -509,7 +509,7 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
         resp = handle_priority_change_req(req);
 
     } else if (req.get_type() == msg_type::client_request) {
-        guard.unlock();
+        //guard.unlock();
         resp = handle_cli_req(req);
 
     } else {

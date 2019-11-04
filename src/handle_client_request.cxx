@@ -33,7 +33,7 @@ limitations under the License.
 namespace nuraft {
 
 ptr<resp_msg> raft_server::handle_cli_req(req_msg& req) {
-    std::lock_guard<std::mutex> ll(cli_lock_);
+    //std::lock_guard<std::mutex> ll(cli_lock_);
 
     ptr<resp_msg> resp = nullptr;
     ulong last_idx = 0;
