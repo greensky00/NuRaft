@@ -311,7 +311,8 @@ void raft_server::log_current_params() {
           "reserved logs %d, client timeout %d, "
           "auto forwarding %s, API call type %s, "
           "custom commit quorum size %d, "
-          "custom election quorum size %d",
+          "custom election quorum size %d, "
+          "flexible cluster %s",
           params->election_timeout_lower_bound_,
           params->election_timeout_upper_bound_,
           params->heart_beat_interval_,
@@ -326,7 +327,8 @@ void raft_server::log_current_params() {
           ( params->return_method_ == raft_params::blocking
             ? "BLOCKING" : "ASYNC" ),
           params->custom_commit_quorum_size_,
-          params->custom_election_quorum_size_ );
+          params->custom_election_quorum_size_,
+          ( params->flexible_cluster_ ? "ON" : "OFF" ) );
 }
 
 raft_params raft_server::get_current_params() const {
@@ -419,6 +421,11 @@ int32 raft_server::get_num_voting_members() {
 int32 raft_server::get_quorum_for_election() {
     ptr<raft_params> params = ctx_->get_params();
     int32 num_voting_members = get_num_voting_members();
+    if (num_voting_members == 2 && params->flexible_cluster_) {
+        // Flexible cluster mode: quorum size is 0.
+        return 0;
+    }
+
     if ( params->custom_election_quorum_size_ <= 0 ||
          params->custom_election_quorum_size_ > num_voting_members ) {
         return num_voting_members / 2;
@@ -429,6 +436,11 @@ int32 raft_server::get_quorum_for_election() {
 int32 raft_server::get_quorum_for_commit() {
     ptr<raft_params> params = ctx_->get_params();
     int32 num_voting_members = get_num_voting_members();
+    if (num_voting_members == 2 && params->flexible_cluster_) {
+        // Flexible cluster mode: quorum size is 0.
+        return 0;
+    }
+
     if ( params->custom_commit_quorum_size_ <= 0 ||
          params->custom_commit_quorum_size_ > num_voting_members ) {
         return num_voting_members / 2;

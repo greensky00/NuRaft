@@ -200,6 +200,7 @@ ptr<req_msg> raft_server::create_append_entries_req(peer& p) {
     ulong last_log_idx(0L);
     ulong term(0L);
     ulong starting_idx(1L);
+    ptr<raft_params> params = ctx_->get_params();
 
     {
         recur_lock(lock_);
@@ -243,7 +244,7 @@ ptr<req_msg> raft_server::create_append_entries_req(peer& p) {
     // causing some of the requested entries to be unavailable. The log store should
     // return nullptr to indicate such errors.
     ulong end_idx = std::min( cur_nxt_idx,
-                              last_log_idx + 1 + ctx_->get_params()->max_append_size_ );
+                              last_log_idx + 1 + params->max_append_size_ );
 
     // NOTE: If this is a retry, probably the follower is down.
     //       Send just one log until it comes back
@@ -444,10 +445,11 @@ ptr<resp_msg> raft_server::handle_append_entries(req_msg& req)
               local_snp->get_last_log_term() == req.get_last_log_term() );
 
     p_lv( (log_okay ? L_TRACE : (supp_exp_warning ? L_INFO : L_WARN) ),
-          "[LOG %s] req log idx: %zu, req log term: %zu, my last log idx: %zu, "
-          "my log (%zu) term: %zu",
+          "[LOG %s] req last log idx: %zu (%zu logs), req last log term: %zu, "
+          "my last log idx: %zu, my log (%zu) term: %zu",
           (log_okay ? "OK" : "XX"),
           req.get_last_log_idx(),
+          req.log_entries().size(),
           req.get_last_log_term(),
           log_store_->next_slot() - 1,
           req.get_last_log_idx(),
@@ -739,10 +741,6 @@ void raft_server::handle_append_entries_resp(resp_msg& resp) {
         need_to_catchup = p->clear_pending_commit() ||
                           resp.get_next_idx() < log_store_->next_slot();
 
-        if (srv_to_leave_ && srv_to_leave_->get_id() == p->get_id()) {
-
-        }
-
     } else {
         ulong prev_next_log = p->get_next_log_idx();
         std::lock_guard<std::mutex> guard(p->get_lock());
@@ -750,7 +748,7 @@ void raft_server::handle_append_entries_resp(resp_msg& resp) {
             // fast move for the peer to catch up
             p->set_next_log_idx(resp.get_next_idx());
         } else {
-            // if not, move one log backward.
+            // Otherwise, move one log backward.
             p->set_next_log_idx(p->get_next_log_idx() - 1);
         }
         bool suppress = p->need_to_suppress_error();

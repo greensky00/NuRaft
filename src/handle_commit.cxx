@@ -349,10 +349,14 @@ bool raft_server::apply_config_log_entry(ptr<log_entry>& le,
 
 void raft_server::snapshot_and_compact(ulong committed_idx) {
     ptr<raft_params> params = ctx_->get_params();
-    if ( params->snapshot_distance_ == 0 ||
-         ( committed_idx - log_store_->start_index() + 1 ) <
+
+    if ( params->snapshot_distance_ == 0 ) {
+        // Snapshot is disabled.
+        return;
+    }
+    if ( ( committed_idx - log_store_->start_index() + 1 ) <
                (ulong)params->snapshot_distance_ ) {
-        // snapshot is disabled or the log store is not long enough
+        // Log store is not long enough
         return;
     }
     if ( !state_machine_->chk_create_snapshot() ) {

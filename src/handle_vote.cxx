@@ -119,7 +119,16 @@ void raft_server::initiate_vote(bool ignore_priority) {
         // Request vote when
         //  1) my priority satisfies the target, OR
         //  2) I'm the only node in the group.
-        state_->inc_term();
+        ptr<raft_params> params = ctx_->get_params();
+        if (params->flexible_cluster_) {
+            // Flexible cluster mode:
+            //   To avoid having the same term, 10's digit will increase
+            //   and then we add server ID.
+            uint64_t prev = state_->get_term() / 10;
+            state_->set_term( (prev + 1) * 10 + id_ );
+        } else {
+            state_->inc_term();
+        }
         state_->set_voted_for(-1);
         role_ = srv_role::candidate;
         votes_granted_ = 0;

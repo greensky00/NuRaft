@@ -87,6 +87,7 @@ struct raft_params {
         , use_bg_thread_for_urgent_commit_(true)
         , locking_method_type_(dual_mutex)
         , return_method_(blocking)
+        , flexible_cluster_(false)
         {}
 
     /**
@@ -422,7 +423,7 @@ public:
     int32 leadership_expiry_;
 
     /**
-     * If true, zero-priority member can initiate vote
+     * If `true`, zero-priority member can initiate vote
      * when leader is not elected long time (that can happen
      * only the zero-priority member has the latest log).
      * Once the zero-priority member becomes a leader,
@@ -432,15 +433,15 @@ public:
     bool allow_temporary_zero_priority_leader_;
 
     /**
-     * If true, follower node will forward client request
+     * If `true`, follower node will forward client request
      * to the current leader.
      * Otherwise, it will return error to client immediately.
      */
     bool auto_forwarding_;
 
     /**
-     * If true, creating replication (append_entries) requests will be
-     * done by a backgroudn thread, instead of doing it in user threads.
+     * If `true`, creating replication (append_entries) requests will be
+     * done by a background thread, instead of doing it in user threads.
      * There can be some delay a little bit, but it improves reducing
      * the lock contention.
      */
@@ -455,6 +456,19 @@ public:
      * To choose blocking call or asynchronous call.
      */
     return_method_type return_method_;
+
+    /**
+     * An option for a cluster with 2 servers.
+     *
+     * If `true`, it will not follow the original Raft protocol to achieve
+     * higher availability. Leader will commit logs without waiting for
+     * quorum so that data loss can happen if the leader dies.
+     * However, in this mode, term value will be assigned based on a special
+     * counter in order to avoid log diverging.
+     *
+     * With this mode, all server IDs should be a single digit number.
+     */
+    bool flexible_cluster_;
 };
 
 }
