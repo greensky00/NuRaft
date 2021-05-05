@@ -219,6 +219,14 @@ void raft_server::handle_election_timeout() {
         return;
     }
 
+    if (sm_catchup_target_) {
+        // Enforced state machine catch-up is in progress.
+        p_tr("enforced state machine catch-up is in progress: %lu/%lu",
+             sm_commit_index_.load(), sm_catchup_target_.load());
+        restart_election_timer();
+        return;
+    }
+
     if (out_of_log_range_) {
         p_wn("Triggered election timer but server is out of log range");
         return;

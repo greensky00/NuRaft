@@ -984,6 +984,14 @@ protected:
     std::atomic<bool> write_paused_;
 
     /**
+     *
+     * If non-zero, `enforced_state_machine_catchup_before_init_` option is
+     * enabled, and the catch-up is in progress. It is set to the log number
+     * that the state machine should execute before the initialization.
+     */
+    std::atomic<ulong> sm_catchup_target_;
+
+    /**
      * Server ID indicates the candidate for the next leader,
      * as a part of leadership takeover task.
      */

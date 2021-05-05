@@ -66,6 +66,7 @@ raft_server::raft_server(context* ctx, const init_options& opt)
     , commit_bg_stopped_(false)
     , append_bg_stopped_(false)
     , write_paused_(false)
+    , sm_catchup_target_(0)
     , next_leader_candidate_(-1)
     , im_learner_(false)
     , serving_req_(false)
@@ -233,6 +234,17 @@ raft_server::raft_server(context* ctx, const init_options& opt)
     print_msg += temp_buf;
     p_in(print_msg.c_str());
 
+    if (params->enforced_state_machine_catchup_before_init_) {
+        uint64_t last_log_idx = get_last_log_idx();
+        uint64_t sm_idx = sm_commit_index_.load();
+        if (sm_idx < last_log_idx) {
+            p_in("state machine catch-up is enforced, "
+                 "last log index %lu, state machine index %lu",
+                 last_log_idx, sm_idx);
+            sm_catchup_target_ = last_log_idx;
+        }
+    }
+
     if (opt.start_server_in_constructor_) {
         start_server(opt.skip_initial_election_timeout_);
     }
@@ -282,8 +294,22 @@ void raft_server::start_server(bool skip_initial_election_timeout)
                                      (params->rpc_failure_backoff_) );
         restart_election_timer();
     }
+
     priority_change_timer_.reset();
     p_db("server %d started", id_);
+
+    // If enforced state machine catch-up is on, awake commit thread.
+    if (sm_catchup_target_) {
+        if (mgr) {
+            // Global thread pool exists, request it.
+            p_tr("request commit to global thread pool");
+            mgr->request_commit( this->shared_from_this() );
+        } else {
+            p_tr("commit_cv_ notify (local thread)");
+            std::unique_lock<std::mutex> lock(commit_cv_lock_);
+            commit_cv_.notify_one();
+        }
+    }
 }
 
 raft_server::~raft_server() {
@@ -606,6 +632,12 @@ ptr<resp_msg> raft_server::process_req(req_msg& req) {
     if (stopping_) {
         // Shutting down, ignore all incoming messages.
         p_wn("stopping, return null");
+        return nullptr;
+    }
+
+    if (sm_catchup_target_) {
+        p_tr("enforced state machine catch-up is in progress: %lu/%lu",
+             sm_commit_index_.load(), sm_catchup_target_.load());
         return nullptr;
     }
 

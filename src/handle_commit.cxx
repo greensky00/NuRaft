@@ -231,6 +231,12 @@ bool raft_server::commit_in_bg_exec(size_t timeout_ms) {
                  exp_idx,
                  index_to_commit);
         }
+
+        if (sm_catchup_target_ && sm_commit_index_ > sm_catchup_target_) {
+            p_in("enforced state machine catch-up is done: %lu/%lu",
+                 sm_commit_index_.load(), sm_catchup_target_.load());
+            sm_catchup_target_ = 0;
+        }
     }
     p_db( "DONE: commit upto %ld, curruent idx %ld\n",
           quick_commit_index_.load(), sm_commit_index_.load() );

@@ -92,6 +92,7 @@ struct raft_params {
         , locking_method_type_(dual_mutex)
         , return_method_(blocking)
         , auto_forwarding_req_timeout_(0)
+        , enforced_state_machine_catchup_before_init_(false)
         {}
 
     /**
@@ -514,6 +515,14 @@ public:
      * If 0, there will be no timeout for auto forwarding.
      */
     int32 auto_forwarding_req_timeout_;
+
+    /**
+     * If `true`, the initialization of the Raft server will be postponed
+     * until the state machine executes all the pending committed logs
+     * (if they exist). The Raft server can be neither leader nor follower
+     * until then.
+     */
+    bool enforced_state_machine_catchup_before_init_;
 };
 
 }
