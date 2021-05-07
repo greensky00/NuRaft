@@ -303,6 +303,13 @@ public:
         return entry->second;
     }
 
+    void truncateData(ulong log_idx_upto) {
+        auto entry = preCommits.lower_bound(log_idx_upto);
+        preCommits.erase(entry, preCommits.end());
+        auto entry2 = commits.lower_bound(log_idx_upto);
+        commits.erase(entry2, commits.end());
+    }
+
 private:
     std::map<uint64_t, ptr<buffer>> preCommits;
     std::map<uint64_t, ptr<buffer>> commits;
