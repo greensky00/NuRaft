@@ -941,12 +941,7 @@ void raft_server::become_leader() {
         ptr<snapshot> nil_snp;
         for (peer_itor it = peers_.begin(); it != peers_.end(); ++it) {
             ptr<peer> pp = it->second;
-            ptr<snapshot_sync_ctx> sync_ctx = pp->get_snapshot_sync_ctx();
-            if (sync_ctx) {
-                void*& user_ctx = sync_ctx->get_user_snp_ctx();
-                state_machine_->free_user_snp_ctx(user_ctx);
-                pp->set_snapshot_in_sync(nil_snp);
-            }
+            clear_snapshot_sync_ctx(*pp);
             // Reset RPC client for all peers.
             // NOTE: Now we don't reset client, as we already did it
             //       during pre-vote phase.

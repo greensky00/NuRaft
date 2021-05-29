@@ -1868,10 +1868,10 @@ int snapshot_context_timeout_join_test() {
     // User snapshot ctx should exist.
     CHK_EQ(1, s1.getTestSm()->getNumOpenedUserCtxs());
 
-    // Stop S3, and wait for 30 heartbeats.
+    // Stop S3, and wait.
     s3.raftServer->shutdown();
     s3.stopAsio();
-    TestSuite::sleep_ms(RaftAsioPkg::HEARTBEAT_MS * 30, "stop S3");
+    TestSuite::sleep_ms(RaftAsioPkg::HEARTBEAT_MS * 25, "stop S3");
 
     // User snapshot ctx should be empty.
     CHK_Z(s1.getTestSm()->getNumOpenedUserCtxs());
@@ -1880,6 +1880,7 @@ int snapshot_context_timeout_join_test() {
     s3.getTestSm()->setSnpDelay(0);
     s3.restartServer();
     TestSuite::sleep_sec(1, "restarting S3");
+    TestSuite::sleep_sec(2, "wait for previous adding server to be expired");
 
     // Re-attempt adding S3.
     s1.raftServer->add_srv( *s3.getTestMgr()->get_srv_config() );
