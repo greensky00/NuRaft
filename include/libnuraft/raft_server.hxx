@@ -748,6 +748,7 @@ protected:
                                           ulong last_log_idx,
                                           ulong term,
                                           ulong commit_idx);
+    bool check_snapshot_timeout(ptr<peer> pp);
     void commit(ulong target_idx);
     void snapshot_and_compact(ulong committed_idx);
     bool update_term(ulong term);

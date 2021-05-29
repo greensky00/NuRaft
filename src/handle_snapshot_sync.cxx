@@ -40,6 +40,22 @@ int32 raft_server::get_snapshot_sync_block_size() const {
     return block_size == 0 ? default_snapshot_sync_block_size : block_size;
 }
 
+bool raft_server::check_snapshot_timeout(ptr<peer> pp) {
+    ptr<snapshot_sync_ctx> sync_ctx = pp->get_snapshot_sync_ctx();
+    if (!sync_ctx) return false;
+
+    if ( sync_ctx->get_timer().timeout() ) {
+        p_wn("snapshot install task for peer %d timed out: %lu ms, "
+             "reset snapshot sync context %p",
+             pp->get_id(), sync_ctx->get_timer().get_ms(), sync_ctx.get());
+        void*& user_ctx = sync_ctx->get_user_snp_ctx();
+        state_machine_->free_user_snp_ctx(user_ctx);
+        pp->set_snapshot_in_sync(nullptr);
+        return true;
+    }
+    return false;
+}
+
 ptr<req_msg> raft_server::create_sync_snapshot_req(peer& p,
                                                    ulong last_log_idx,
                                                    ulong term,
@@ -116,7 +132,11 @@ ptr<req_msg> raft_server::create_sync_snapshot_req(peer& p,
             void*& user_ctx = sync_ctx->get_user_snp_ctx();
             state_machine_->free_user_snp_ctx(user_ctx);
         }
-        p.set_snapshot_in_sync(snp);
+
+        // Timeout: heartbeat * response limit.
+        ulong snp_timeout_ms = ctx_->get_params()->heart_beat_interval_ *
+                               raft_server::raft_limits_.response_limit_;
+        p.set_snapshot_in_sync(snp, snp_timeout_ms);
     }
 
     bool last_request = false;
@@ -159,6 +179,7 @@ ptr<req_msg> raft_server::create_sync_snapshot_req(peer& p,
                   obj_idx,
                   rc );
             // Reset the `sync_ctx` so as to retry with the newer version.
+            state_machine_->free_user_snp_ctx(user_snp_ctx);
             p.set_snapshot_in_sync(nullptr);
             return nullptr;
         }

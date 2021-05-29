@@ -74,6 +74,24 @@ void raft_server::handle_hb_timeout(int32 srv_id) {
          srv_to_join_ &&
          srv_to_join_->get_id() == srv_id ) {
         p_in("retrying snapshot read for server %d", srv_id);
+        if (srv_to_join_->need_to_reconnect()) {
+            p_in("rpc client to %d needs reconnection", srv_id);
+            bool succ = reconnect_client(*srv_to_join_);
+            if (!succ) {
+                // Reconnection failed, check the snapshot validity.
+                bool snp_expired = check_snapshot_timeout(srv_to_join_);
+                if (!snp_expired) {
+                    // Snapshot is still valid, setup one more temp haertbeat.
+                    p_wn("reconnection failed, setup next temporary heartbeat");
+                    srv_to_join_snp_retry_required_ = true;
+                    enable_hb_for_peer(*srv_to_join_);
+                } else {
+                    // Otherwise, do nothing, we will not continue snapshot installation.
+                    p_wn("reconnection failed, and snapshot expired");
+                }
+                return;
+            }
+        }
         sync_log_to_new_srv(0);
         return;
     }

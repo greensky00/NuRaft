@@ -729,6 +729,8 @@ void raft_server::handle_peer_resp(ptr<resp_msg>& resp, ptr<rpc_exception>& err)
         if (pp) {
             pp->inc_rpc_errs();
             rpc_errs = pp->get_rpc_errs();
+
+            check_snapshot_timeout(pp);
         }
 
         if (rpc_errs < raft_server::raft_limits_.warning_limit_) {
@@ -1365,6 +1367,20 @@ void raft_server::handle_ext_resp_err(rpc_exception& err) {
     ptr<req_msg> req = err.req();
     p_in( "receive an rpc error response from peer server, %s %d",
           err.what(), req->get_type() );
+
+    if ( req->get_type() == msg_type::install_snapshot_request ) {
+        if (srv_to_join_ && srv_to_join_->get_id() == req->get_dst()) {
+            bool timed_out = check_snapshot_timeout(srv_to_join_);
+            if (!timed_out) {
+                // Enable temp HB to retry snapshot.
+                p_wn("sending snapshot to joining server %d failed, "
+                     "retry with temp heartbeat", srv_to_join_->get_id());
+                srv_to_join_snp_retry_required_ = true;
+                enable_hb_for_peer(*srv_to_join_);
+            }
+        }
+    }
+
     if ( req->get_type() != msg_type::sync_log_request     &&
          req->get_type() != msg_type::join_cluster_request &&
          req->get_type() != msg_type::leave_cluster_request ) {
