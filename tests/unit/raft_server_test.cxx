@@ -2110,6 +2110,83 @@ int snapshot_randomized_creation_test() {
     return 0;
 }
 
+int snapshot_close_for_removed_peer_test() {
+    reset_log_files();
+    ptr<FakeNetworkBase> f_base = cs_new<FakeNetworkBase>();
+
+    std::string s1_addr = "S1";
+    std::string s2_addr = "S2";
+    std::string s3_addr = "S3";
+
+    RaftPkg s1(f_base, 1, s1_addr);
+    RaftPkg s2(f_base, 2, s2_addr);
+    RaftPkg s3(f_base, 3, s3_addr);
+    std::vector<RaftPkg*> pkgs = {&s1, &s2, &s3};
+
+    CHK_Z( launch_servers( pkgs ) );
+    CHK_Z( make_group( pkgs ) );
+
+    for (auto& entry: pkgs) {
+        RaftPkg* pp = entry;
+        raft_params param = pp->raftServer->get_current_params();
+        param.return_method_ = raft_params::async_handler;
+        pp->raftServer->update_params(param);
+    }
+
+    const size_t NUM = 10;
+
+    // Append messages asynchronously.
+    std::list< ptr< cmd_result< ptr<buffer> > > > handlers;
+    for (size_t ii=0; ii<NUM; ++ii) {
+        std::string test_msg = "test" + std::to_string(ii);
+        ptr<buffer> msg = buffer::alloc(test_msg.size() + 1);
+        msg->put(test_msg);
+        ptr< cmd_result< ptr<buffer> > > ret =
+            s1.raftServer->append_entries( {msg} );
+
+        CHK_TRUE( ret->get_accepted() );
+
+        handlers.push_back(ret);
+    }
+
+    // Send it to S2 only.
+
+    // Packet for pre-commit.
+    s1.fNet->execReqResp("S2");
+    // Packet for commit.
+    s1.fNet->execReqResp("S2");
+    // Wait for bg commit.
+    CHK_Z( wait_for_sm_exec(pkgs, COMMIT_TIMEOUT_SEC) );
+
+    // One more time to make sure.
+    s1.fNet->execReqResp("S2");
+    s1.fNet->execReqResp("S2");
+    CHK_Z( wait_for_sm_exec(pkgs, COMMIT_TIMEOUT_SEC) );
+
+    // Make req to S3 failed.
+    //s1.fNet->makeReqFailAll("S3");
+
+    // Now remove S3 from the cluster.
+    s1.raftServer->remove_srv(3);
+
+    // Trigger heartbeat 5 times, and send it to S2 only.
+    for (size_t ii = 0; ii < 5; ++ii) {
+        s1.fTimer->invoke(timer_task_type::heartbeat_timer);
+        s1.fNet->execReqResp("S2");
+        //s1.fNet->makeReqFailAll("S3");
+    }
+
+    print_stats(pkgs);
+
+    s1.raftServer->shutdown();
+    s2.raftServer->shutdown();
+    s3.raftServer->shutdown();
+
+    f_base->destroy();
+
+    return 0;
+}
+
 int join_empty_node_test() {
     reset_log_files();
     ptr<FakeNetworkBase> f_base = cs_new<FakeNetworkBase>();
@@ -3104,6 +3181,9 @@ int main(int argc, char** argv) {
 
     ts.doTest( "snapshot randomized creation test",
                snapshot_randomized_creation_test );
+
+    ts.doTest( "snapshot close for removed peer test",
+               snapshot_close_for_removed_peer_test );
 
     ts.doTest( "join empty node test",
                join_empty_node_test );
