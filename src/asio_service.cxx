@@ -592,6 +592,8 @@ private:
                 }
             }
 
+            size_t data_begin_pos = ss.pos();
+
             size_t LOG_ENTRY_SIZE = 8 + 1 + 4;
             if (flags_ & INCLUDE_LOG_TIMESTAMP) {
                 LOG_ENTRY_SIZE += 8;
@@ -634,6 +636,38 @@ private:
                 ptr<log_entry> entry(
                     cs_new<log_entry>(term, buf, val_type, timestamp) );
                 req->log_entries().push_back(entry);
+            }
+
+            // ======== Verify ==========
+            ss.pos(data_begin_pos);
+            size_t count = 0;
+            for (auto& ee: req->log_entries()) {
+                ulong term = ss.get_u64();
+                log_val_type val_type = (log_val_type)ss.get_u8();
+                uint64_t timestamp = (flags_ & INCLUDE_LOG_TIMESTAMP) ? ss.get_u64() : 0;
+                (void)timestamp;
+
+                size_t val_size = ss.get_i32();
+                int cmp = memcmp( ss.data(),
+                                  ee->get_buf().data_begin(),
+                                  ee->get_buf().size() );
+                if ( term != ee->get_term() ||
+                     val_type != ee->get_val_type() ||
+                     val_size != ee->get_buf().size() ||
+                     cmp != 0 ) {
+                    p_ft("data corruption! index %zu, term %lu %lu, val type %u %u, "
+                         "val size %zu %zu, cmp %d",
+                         count,
+                         term, ee->get_term(),
+                         val_type, ee->get_val_type(),
+                         val_size, ee->get_buf().size(),
+                         cmp);
+                    if (impl_->get_options().corrupted_msg_handler_) {
+                        impl_->get_options().corrupted_msg_handler_(header_, log_ctx);
+                    }
+                }
+                ss.pos(ss.pos() + ee->get_buf().size());
+                count++;
             }
         }
 
@@ -990,6 +1024,8 @@ public:
         , socket_busy_(false)
         , operation_timer_(io_svc)
         , l_(l)
+        , dbg_req_buf_data_pos_(0)
+        , dbg_req_buf_(nullptr)
     {
         client_id_ = impl_->assign_client_id();
         if (ssl_enabled_) {
@@ -1295,11 +1331,16 @@ public:
             req_buf_bs.put_bytes( (byte*)meta_str.data(), meta_str.size() );
         }
 
+        dbg_req_buf_data_pos_ = req_buf_bs.pos();
+        dbg_log_entry_bufs_ = log_entry_bufs;
+        dbg_req_buf_ = req_buf;
+
         for (auto& it: log_entry_bufs) {
             // req_buf->put(*(it));
             req_buf_bs.put_buffer(*(it));
         }
         // req_buf->pos(0);
+        verify_req_buf();
 
         if (impl_->get_options().crc_on_entire_message_) {
             uint32_t crc_payload = crc32_8( req_buf->data_begin() + payload_pos,
@@ -1337,6 +1378,24 @@ public:
                               std::placeholders::_2 ) );
     }
 private:
+    void verify_req_buf() {
+        buffer_serializer ss(dbg_req_buf_);
+        ss.pos(dbg_req_buf_data_pos_);
+        for (auto& ee: dbg_log_entry_bufs_) {
+            ee->data_begin();
+            int cmp = memcmp(ee->data_begin(), ss.data(), ee->size());
+            if (cmp != 0) {
+                p_ft("data corruption! at %zu / %zu", ss.pos(), ss.size());
+                if (impl_->get_options().corrupted_msg_handler_) {
+                    impl_->get_options().corrupted_msg_handler_(dbg_req_buf_,
+                                                                dbg_req_buf_);
+                }
+                return;
+            }
+            ss.pos(ss.pos() + ee->size());
+        }
+    }
+
     void execute_resolver(ptr<asio_rpc_client> self,
                           ptr<req_msg> req,
                           const std::string& host,
@@ -1504,6 +1563,8 @@ private:
                std::error_code err,
                size_t bytes_transferred )
     {
+        verify_req_buf();
+
         // Now we can safely free the `req_buf`.
         (void)buf;
         ptr<asio_rpc_client> self(this->shared_from_this());
@@ -1542,6 +1603,8 @@ private:
                        std::error_code err,
                        size_t bytes_transferred)
     {
+        verify_req_buf();
+
         ptr<asio_rpc_client> self(this->shared_from_this());
         if (err) {
             abandoned_ = true;
@@ -1739,6 +1802,10 @@ private:
     uint64_t client_id_;
     asio::steady_timer operation_timer_;
     ptr<logger> l_;
+
+    std::vector<ptr<buffer>> dbg_log_entry_bufs_;
+    size_t dbg_req_buf_data_pos_;
+    ptr<buffer> dbg_req_buf_;
 };
 
 } // namespace nuraft
