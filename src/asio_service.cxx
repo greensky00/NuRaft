@@ -243,6 +243,7 @@ public:
         , cached_port_(0)
         , crc_header_(0)
         , crc_from_msg_(0)
+        , dbg_read_calls_(0)
     {
         p_tr("asio rpc session created: %p", this);
     }
@@ -416,6 +417,11 @@ public:
             } else {
                 // Carry some data, need to read further.
                 ptr<buffer> log_ctx = buffer::alloc((size_t)data_size);
+                log_data_ = log_ctx;
+                memset(log_ctx->data_begin(), 'x', data_size);
+
+                verify_concurrent_read_calls(0, 1);
+
                 aa::read( ssl_enabled_, ssl_socket_, socket_,
                           asio::buffer( log_ctx->data(),
                                         (size_t)data_size ),
@@ -442,6 +448,18 @@ public:
     }
 
 private:
+    void verify_concurrent_read_calls(int from, int to) {
+        if (!dbg_read_calls_.compare_exchange_strong(from, to)) {
+            p_ft("concurrent read calls! expected %d -> %d, but %d",
+                 from, to, dbg_read_calls_.load());
+            if (impl_->get_options().corrupted_msg_handler_) {
+                impl_->get_options().corrupted_msg_handler_(header_,
+                                                            log_data_);
+            }
+            return;
+        }
+    }
+
     void invoke_connection_callback(bool is_open) {
         if (is_leader_ && src_id_ != handler_->get_leader()) {
             // Leader has been changed without closing session.
@@ -480,6 +498,7 @@ private:
     void read_log_data(ptr<buffer> log_ctx,
                        const ERROR_CODE& err,
                        size_t bytes_read) {
+        verify_concurrent_read_calls(1, 0);
         if (!err) {
             this->read_complete(header_, log_ctx);
         } else {
@@ -862,6 +881,8 @@ private:
      * CRC number from the request header.
      */
     uint32_t crc_from_msg_;
+
+    std::atomic<int> dbg_read_calls_;
 };
 
 // rpc listener implementation
@@ -1026,6 +1047,7 @@ public:
         , l_(l)
         , dbg_req_buf_data_pos_(0)
         , dbg_req_buf_(nullptr)
+        , dbg_write_calls_(0)
     {
         client_id_ = impl_->assign_client_id();
         if (ssl_enabled_) {
@@ -1363,6 +1385,7 @@ public:
                                                     std::placeholders::_1 ) );
         }
 
+        verify_concurrent_write_calls(0, 1);
 
         // Note: without passing `req_buf` to callback function, it will be
         //       unreachable before the write is done so that it is freed
@@ -1393,6 +1416,18 @@ private:
                 return;
             }
             ss.pos(ss.pos() + ee->size());
+        }
+    }
+
+    void verify_concurrent_write_calls(int from, int to) {
+        if (!dbg_write_calls_.compare_exchange_strong(from, to)) {
+            p_ft("concurrent write calls! expected %d -> %d, but %d",
+                 from, to, dbg_write_calls_.load());
+            if (impl_->get_options().corrupted_msg_handler_) {
+                impl_->get_options().corrupted_msg_handler_(dbg_req_buf_,
+                                                            dbg_req_buf_);
+            }
+            return;
         }
     }
 
@@ -1582,6 +1617,8 @@ private:
                                 std::placeholders::_2));
 
         } else {
+            verify_concurrent_write_calls(1, 0);
+
             operation_timer_.cancel();
             abandoned_ = true;
             ptr<resp_msg> rsp;
@@ -1604,6 +1641,7 @@ private:
                        size_t bytes_transferred)
     {
         verify_req_buf();
+        verify_concurrent_write_calls(1, 0);
 
         ptr<asio_rpc_client> self(this->shared_from_this());
         if (err) {
@@ -1806,6 +1844,8 @@ private:
     std::vector<ptr<buffer>> dbg_log_entry_bufs_;
     size_t dbg_req_buf_data_pos_;
     ptr<buffer> dbg_req_buf_;
+
+    std::atomic<int> dbg_write_calls_;
 };
 
 } // namespace nuraft
