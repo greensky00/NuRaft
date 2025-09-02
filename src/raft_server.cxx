@@ -114,6 +114,8 @@ raft_server::raft_server(context* ctx, const init_options& opt)
     , excluded_from_the_quorum_(false)
     , sm_commit_notifier_target_idx_(0)
     , sm_commit_notifier_notified_idx_(0)
+    , sm_commit_follower_target_idx_(0)
+    , ea_sm_commit_follower_(new EventAwaiter())
 {
     // Reset it with sufficiently big negative offset, so as not to
     // incorrectly consider it as up-to-date.
@@ -282,6 +284,7 @@ void raft_server::start_server(bool skip_initial_election_timeout)
     ptr<raft_params> params = ctx_->get_params();
     sm_commit_notifier_target_idx_ = 0;
     sm_commit_notifier_notified_idx_ = 0;
+    sm_commit_follower_target_idx_ = 0;
     global_mgr* mgr = get_global_mgr();
     if (mgr) {
         p_in("global manager is detected. will use shared thread pool");
@@ -349,6 +352,7 @@ raft_server::~raft_server() {
     delete bg_append_ea_;
     delete ea_sm_commit_exec_in_progress_;
     delete ea_follower_log_append_;
+    delete ea_sm_commit_follower_;
 }
 
 void raft_server::update_rand_timeout() {

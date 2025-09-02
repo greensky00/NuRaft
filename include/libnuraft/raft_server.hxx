@@ -1749,6 +1749,16 @@ protected:
      * Notified index targeted by `sm_commit_notifier_target_idx_`.
      */
     std::atomic<uint64_t> sm_commit_notifier_notified_idx_;
+
+    /**
+     * If track mode is one, follower will synchonously wait for given commit index.
+     */
+    std::atomic<uint64_t> sm_commit_follower_target_idx_;
+
+    /**
+     * Awaiter for follower's state machine commit.
+     */
+    EventAwaiter* ea_sm_commit_follower_;
 };
 
 } // namespace nuraft;

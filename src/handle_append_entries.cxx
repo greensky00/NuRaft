@@ -333,6 +333,9 @@ bool raft_server::request_append_entries(ptr<peer> p) {
             p_tr("send request to %d, streaming: %d, is_busy: %d\n", (int)p->get_id(),
                  streaming, p->is_busy());
             msg = create_append_entries_req(p, last_streamed_log_idx);
+            p_in("to peer %d, last_log_idx: %" PRIu64 ", log_entries: %zu, commit_idx: %" PRIu64,
+                  msg->get_dst(), msg->get_last_log_idx(), msg->log_entries().size(),
+                  msg->get_commit_idx());
             m_handler = resp_handler_;
 
             if (msg) {
@@ -1124,8 +1127,23 @@ ptr<resp_msg> raft_server::handle_append_entries(req_msg& req)
     }
 
     if (ctx_->get_params()->track_peers_sm_commit_idx_) {
-        // If peer track mode is enabled, we should send
-        // the current SM committed index to the leader.
+        // If peer track mode is enabled, we should
+        // wait for the state machine's commit synchronously,
+        // and send the current SM committed index to the leader.
+        if (req.get_commit_idx() <= quick_commit_index_ &&
+            sm_commit_index_ < req.get_commit_idx()) {
+            sm_commit_follower_target_idx_ = req.get_commit_idx();
+            p_in("wait sm commit %" PRIu64 " -> %" PRIu64,
+                 sm_commit_index_.load(),
+                 sm_commit_follower_target_idx_.load());
+            ea_sm_commit_follower_->wait_ms(ctx_->get_params()->heart_beat_interval_);
+            ea_sm_commit_follower_->reset();
+        } else {
+            // If request's commit index is greater than quick_commit_index_,
+            // waiting for state machine's commit is meaningless, as anyway
+            // we cannot catch up with the leader.
+        }
+
         resp_appendix appendix;
         appendix.extra_order_ = resp_appendix::NOTIFYING_SM_COMMITTED_INDEX;
         appendix.sm_committed_idx_ = sm_commit_index_.load();
@@ -1133,6 +1151,10 @@ ptr<resp_msg> raft_server::handle_append_entries(req_msg& req)
         p_tr("appended extra order %s, sm committed index: %" PRIu64,
              resp_appendix::extra_order_msg(appendix.extra_order_),
              appendix.sm_committed_idx_);
+        p_in("req last idx %" PRIu64 ", log entries %zu, resp last idx %" PRIu64
+             ", sm commit index %" PRIu64,
+             req.get_last_log_idx(), req.log_entries().size(),
+             resp->get_next_idx() - 1, appendix.sm_committed_idx_);
     }
 
     p_tr("batch size hint: %" PRId64 " bytes, flags: %" PRIx64,
@@ -1221,7 +1243,7 @@ void raft_server::handle_append_entries_resp(resp_msg& resp) {
             p->set_next_log_idx(resp.get_next_idx());
             prev_matched_idx = p->get_matched_idx();
             new_matched_idx = resp.get_next_idx() - 1;
-            p_tr("peer %d, prev matched idx: %" PRIu64 ", new matched idx: %" PRIu64,
+            p_in("peer %d, prev matched idx: %" PRIu64 ", new matched idx: %" PRIu64,
                  p->get_id(), prev_matched_idx, new_matched_idx);
             p->set_matched_idx(new_matched_idx);
             p->set_last_accepted_log_idx(new_matched_idx);
@@ -1237,7 +1259,7 @@ void raft_server::handle_append_entries_resp(resp_msg& resp) {
                 {
                     std::lock_guard<std::mutex> l(p->get_lock());
                     new_sm_committed_idx = appendix->sm_committed_idx_;
-                    p_tr("sm committed index of peer %d: %" PRIu64 " -> %" PRIu64,
+                    p_in("sm committed index of peer %d: %" PRIu64 " -> %" PRIu64,
                          p->get_id(), prev_sm_committed_idx, new_sm_committed_idx);
                     p->set_sm_committed_idx(new_sm_committed_idx);
                     sm_committed_idx_updated = true;
@@ -1247,7 +1269,7 @@ void raft_server::handle_append_entries_resp(resp_msg& resp) {
                     prev_sm_committed_idx < new_sm_committed_idx) {
                     uint64_t target_idx = find_sm_commit_idx_to_notify();
                     target_idx = update_sm_commit_notifier_target_idx(target_idx);
-                    p_tr("sm commit notify ready: %" PRIu64 ", target idx: %" PRIu64
+                    p_in("sm commit notify ready: %" PRIu64 ", target idx: %" PRIu64
                          ", notified idx: %" PRIu64,
                           new_sm_committed_idx, target_idx,
                           sm_commit_notifier_notified_idx_.load());

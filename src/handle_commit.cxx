@@ -276,6 +276,11 @@ bool raft_server::commit_in_bg_exec(size_t timeout_ms) {
 
         ulong exp_idx = index_to_commit - 1;
         if (sm_commit_index_.compare_exchange_strong(exp_idx, index_to_commit)) {
+            if (ctx_->get_params()->track_peers_sm_commit_idx_ &&
+                sm_commit_follower_target_idx_ >= sm_commit_index_) {
+                ea_sm_commit_follower_->invoke();
+            }
+
             snapshot_and_compact(sm_commit_index_);
 
             cb_func::Param param(id_, leader_);
@@ -315,7 +320,6 @@ bool raft_server::commit_in_bg_exec(size_t timeout_ms) {
                 watcher->set_result(ret_bool, exp);
             }
         }
-
     }
 
     p_db( "DONE: commit upto %" PRIu64 ", current idx %" PRIu64,
@@ -343,7 +347,7 @@ bool raft_server::commit_in_bg_exec(size_t timeout_ms) {
         uint64_t target_idx = find_sm_commit_idx_to_notify();
         uint64_t target_idx2 = update_sm_commit_notifier_target_idx(target_idx);
         if (target_idx != target_idx2) {
-            p_tr("sm commit notify ready: %" PRIu64 ", target idx: %" PRIu64
+            p_in("sm commit notify ready: %" PRIu64 ", target idx: %" PRIu64
                  ", notified idx: %" PRIu64,
                  target_idx, target_idx2, sm_commit_notifier_notified_idx_.load());
         }
@@ -536,7 +540,7 @@ void raft_server::scan_sm_commit_and_notify(uint64_t idx_upto) {
         }
         ptr<commit_ret_elem> elem = entry->second;
 
-        p_tr("notify cb %" PRIu64 " %p", entry->first, &elem->awaiter_);
+        p_in("notify cb %" PRIu64 " %p", entry->first, &elem->awaiter_);
         switch (params->return_method_) {
         case raft_params::blocking:
         default:
