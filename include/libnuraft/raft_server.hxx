@@ -541,6 +541,19 @@ public:
     }
 
     /**
+     * Check whether the state machine is fully caught up with the latest log
+     * at becoming leader, ensuring that the new leader does not return stale data.
+     *
+     * @return `true` if this server is a leader and its state machine is
+     *         fully caught up with the latest log.
+     */
+    bool is_leader_sm_fully_caught_up() const {
+        return is_leader() &&
+               index_at_becoming_leader_ > 0 &&
+               get_committed_log_idx() >= index_at_becoming_leader_;
+    }
+
+    /**
      * Calculate the log index to be committed
      * from current peers' matched indexes.
      *
@@ -1316,6 +1329,12 @@ protected:
      * Otherwise (if non-leader), the value will be 0.
      */
     std::atomic<uint64_t> index_at_becoming_leader_;
+
+    /**
+     * `true` if this server is waiting for state machine to catch up.
+     * Used only when `wait_for_sm_catchup_on_becoming_leader_` option is enabled.
+     */
+    std::atomic<bool> waiting_for_sm_catchup_;
 
     /**
      * (Read-only)

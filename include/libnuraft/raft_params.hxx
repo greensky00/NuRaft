@@ -119,6 +119,7 @@ struct raft_params {
         , max_log_gap_in_stream_(0)
         , max_bytes_in_flight_in_stream_(0)
         , priority_decay_method_(arithmetic_decay)
+        , wait_for_sm_catchup_on_becoming_leader_(false)
         {}
 
     /**
@@ -690,7 +691,15 @@ public:
      * This determines the priority decay method used in priority-based leader
      * election. By default, it uses an arithmetic decay approach.
      */
-    priority_decay_method priority_decay_method_;;
+    priority_decay_method priority_decay_method_;
+
+    /**
+     * If `true`, and if the state machine is behind the latest log
+     * in the log store when elected as a leader, wait for the state machine
+     * to catch up to the latest log index before reporting itself
+     * as a leader.
+     */
+    bool wait_for_sm_catchup_on_becoming_leader_;
 };
 
 }

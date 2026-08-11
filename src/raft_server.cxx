@@ -60,6 +60,7 @@ raft_server::raft_server(context* ctx, const init_options& opt)
     , quick_commit_index_(ctx->state_machine_->last_commit_index())
     , sm_commit_index_(ctx->state_machine_->last_commit_index())
     , index_at_becoming_leader_(0)
+    , waiting_for_sm_catchup_(false)
     , initial_commit_index_(ctx->state_machine_->last_commit_index())
     , hb_alive_(false)
     , election_completed_(true)
@@ -1194,17 +1195,35 @@ void raft_server::become_leader() {
                 conf_buf,
                 log_val_type::conf,
                 timer_helper::get_timeofday_us() ) );
-        index_at_becoming_leader_ = store_log_entry(entry);
+        uint64_t leader_conf_log_idx = store_log_entry(entry);
+
+        // Do -1 to exclude the config log itself.
+        index_at_becoming_leader_ = leader_conf_log_idx ?
+                                    leader_conf_log_idx - 1 : 0;
         p_in("[BECOME LEADER] appended new config at %" PRIu64,
-             index_at_becoming_leader_.load());
+             leader_conf_log_idx);
         config_changing_ = true;
     }
 
-    cb_func::Param param(id_, leader_);
-    ulong my_term = state_->get_term();
-    param.ctx = &my_term;
-    CbReturnCode rc = ctx_->cb_func_.call(cb_func::BecomeLeader, &param);
-    (void)rc; // nothing to do in this callback.
+    // If `wait_for_sm_catchup_on_becoming_leader_` option is set,
+    // `BecomeLeader` will be invoked only when the state machine catches up
+    // with `index_at_becoming_leader_`.
+    if (!params->wait_for_sm_catchup_on_becoming_leader_ ||
+        sm_commit_index_ >= index_at_becoming_leader_) {
+        waiting_for_sm_catchup_ = false;
+
+        cb_func::Param param(id_, leader_);
+        ulong my_term = state_->get_term();
+        param.ctx = &my_term;
+        CbReturnCode rc = ctx_->cb_func_.call(cb_func::BecomeLeader, &param);
+        (void)rc; // nothing to do in this callback.
+
+    } else {
+        waiting_for_sm_catchup_ = true;
+        p_in("[BECOME LEADER] waiting for state machine to catch up "
+             "to index %" PRIu64 ", current sm commit index %" PRIu64,
+             index_at_becoming_leader_.load(), sm_commit_index_.load());
+    }
 
     if (write_paused_) {
         write_paused_ = false;
@@ -1564,6 +1583,7 @@ void raft_server::become_follower() {
         uncommitted_config_.reset();
         pre_vote_.quorum_reject_count_ = 0;
         pre_vote_.no_response_failure_count_ = 0;
+        waiting_for_sm_catchup_ = false;
 
         ptr<raft_params> params = ctx_->get_params();
         if ( params->auto_adjust_quorum_for_small_cluster_ &&
